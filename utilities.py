@@ -51,7 +51,7 @@ MAJOR_CHORDS = [':maj', ':min', ':min', ':maj', ':maj', ':min', ':dim']
 NATURAL_MINOR_CHORDS = [':min', ':dim', ':maj', ':min', ':min', ':maj', ':maj']
 HARMONIC_MINOR_CHORDS = [':min', ':dim', ':maj', ':min', ':maj', ':maj', ':dim']
 
-def key_mask(key, mode):
+def allowed_keys(key, mode):
     """Returns a boolean mask for the given key, where True indicates that the chord is in the key."""
     key_index = NOTE_NAMES.index(key)
     allowed_chords = []
@@ -73,3 +73,16 @@ def key_mask(key, mode):
 
     print(f"Allowed chords for {key} {mode}: {allowed_chords}")
     return allowed_chords
+
+
+def key_bias_vector(key, mode, in_key_boost=1.0, out_key_penalty=1e-3):
+    """Returns a vector of length 84, where each element corresponds to a chord. Chords in the key are boosted, while chords out of the key are penalized."""
+    allowed_chords = allowed_keys(key, mode)
+    bias_vector = np.full(84, out_key_penalty)  # Start with all chords penalized
+    for i, lbl in enumerate(labels[:-1]):  # Exclude the 'N' chord
+        base = lbl.split(':')[0] + ':' + lbl.split(':')[1].replace('7', '').replace('9', '')
+        #print(base)
+        if base in allowed_chords:
+            bias_vector[i] = in_key_boost
+    bias_vector[-1] = in_key_boost  # Ensure the 'N' chord is always allowed
+    return bias_vector

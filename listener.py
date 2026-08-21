@@ -12,7 +12,7 @@ DEVICE_ID = 1
 
 print(sd.query_devices())
 
-trans = lb.sequence.transition_loop(73, 0.9)
+trans = lb.sequence.transition_loop(84, 0.9)
 
 # Global buffer for the sliding window
 audio_buffer = np.zeros(int(SR * WINDOW_SIZE))
@@ -26,6 +26,9 @@ root.configure(bg='black')
 # Large label for the chord name
 chord_label = tk.Label(root, text="WAITING...", font=("Helvetica", 120, "bold"), fg="#00FF00", bg="black")
 chord_label.pack(expand=True)
+
+
+current_key = ('A', 'major')
 
 def update_ui(chord_name):
     """Safely update the UI text from the audio thread."""
@@ -53,10 +56,13 @@ def processing_loop():
         # CENS is smoothed and normalized, making it much better for chord ID than raw CQT.
         chroma = lb.feature.chroma_cens(y=y_harm, sr=SR)
 
+        #print(trans)
+        key_bias = key_bias_vector(*current_key)
+
         probs = np.exp(weights.dot(chroma))
+        probs *= key_bias[:, None]
         probs /= probs.sum(axis=0, keepdims=True)
         path = lb.sequence.viterbi_discriminative(probs, trans)
-        print(path.shape, path[-1])
         
         current_chord = labels[path[-1]]
         
