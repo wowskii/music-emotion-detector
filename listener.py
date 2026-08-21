@@ -56,6 +56,7 @@ def processing_loop():
         probs = np.exp(weights.dot(chroma))
         probs /= probs.sum(axis=0, keepdims=True)
         path = lb.sequence.viterbi_discriminative(probs, trans)
+        print(path.shape, path[-1])
         
         current_chord = labels[path[-1]]
         
