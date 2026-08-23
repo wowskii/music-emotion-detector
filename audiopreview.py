@@ -7,42 +7,7 @@ from utilities import *
 
 HOP_LENGTH = 512
 
-# Intervals (in semitones from the root) used to derive the notes shown for each chord type
-CHORD_INTERVALS = {
-    'maj': [0, 4, 7],
-    'maj7': [0, 4, 7, 11],
-    'min': [0, 3, 7],
-    'min7': [0, 3, 7, 10],
-    'normal7': [0, 4, 7, 10],
-    'min9': [0, 3, 7, 10],
-    'dim': [0, 3, 6],
-}
 
-
-def chord_notes(label):
-    """Returns the list of note names (3-4 notes) that make up a chord label, e.g. 'C:maj' -> ['C', 'E', 'G']."""
-    if label == 'N':
-        return []
-    root, chord_type = label.split(':')
-    root_index = NOTE_NAMES.index(root)
-    intervals = CHORD_INTERVALS.get(chord_type, [])
-    return [NOTE_NAMES[(root_index + i) % 12] for i in intervals]
-
-
-def process_chroma(chromagram, keep_top=3):
-
-    chroma_filter = np.minimum(chromagram,
-                           lb.decompose.nn_filter(chromagram,
-                                                       aggregate=np.median,
-                                                       metric='cosine'))
-    if keep_top == 0:
-        return chroma_filter
-    chroma_smooth = np.zeros_like(chroma_filter)
-    top3_idx = np.argpartition(chroma_filter, -keep_top, axis=0)[-keep_top:, :]
-    cols = np.arange(chroma_filter.shape[1])
-    chroma_smooth[top3_idx, cols] = chroma_filter[top3_idx, cols]
-
-    return chroma_smooth
 
 def analyze_song(path, key=('A', 'major'), key_bias=True, keep_top=3):
     """Runs the same chroma extraction + Viterbi chord decoding used elsewhere on a full audio file."""
@@ -52,7 +17,7 @@ def analyze_song(path, key=('A', 'major'), key_bias=True, keep_top=3):
     chroma = lb.feature.chroma_cens(y=y_harm, sr=sr, hop_length=HOP_LENGTH)
     chroma = process_chroma(chroma, keep_top=keep_top)
 
-    trans = lb.sequence.transition_loop(84, 0.9)
+    trans = lb.sequence.transition_loop(84, 0.5)
     key_bias_vec = key_bias_vector(*key)
 
     probs = np.exp(weights.dot(chroma))
@@ -123,5 +88,5 @@ def play_audio_with_chords(path, key=('A', 'major'), key_bias=True, keep_top=3):
 
 
 if __name__ == "__main__":
-    play_audio_with_chords('data/separated/toramoyo_ft/other.wav')
-    #play_audio_with_chords('data/neverender.mp3', key=('F#', 'minor'))
+    # play_audio_with_chords('data/separated/toramoyo_ft/other.wav')
+    play_audio_with_chords('data/separated/neverender/other.wav', key=('F#', 'minor'))
