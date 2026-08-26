@@ -109,16 +109,17 @@ def export_chords_to_midi(
     bpm=120,
     velocity=80,
     channel=0,
+    beats_per_bar=4,
 ):
     """
-    Analyze an audio file, convert the Viterbi chord labels into note events,
-    and save a MIDI file.
+    Analyze an audio file, quantize the resulting chord events to a bar grid,
+    convert the Viterbi chord labels into note events, and save a MIDI file.
 
     Returns a dictionary with the clear intermediate stages:
     {
         'frame_labels': [...],   # one label per audio frame
         'events': [
-            {'label': 'C:maj', 'start': 0.0, 'end': 1.2},
+            {'label': 'C:maj', 'start': 0.0, 'end': 2.0},
             ...
         ],
         'midi_path': 'output.mid'
@@ -135,6 +136,7 @@ def export_chords_to_midi(
     )
 
     events = group_chord_labels_into_events(chord_labels, times, min_duration=min_duration)
+    # events = quantize_chord_events(events, bpm=bpm, beats_per_bar=beats_per_bar)
 
     midi = MIDIFile(1)
     midi.addTrackName(0, 0, 'Chord transcription')
