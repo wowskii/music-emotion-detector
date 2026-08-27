@@ -7,7 +7,7 @@ from utilities import *
 HOP_LENGTH = 512
 
 
-def analyze_song(path, key=('A', 'major'), key_bias=True, keep_top=3):
+def analyze_song(path, perc_path, key=('A', 'major'), time_signature=(4, 4), bpm=None, key_bias=True, keep_top=3):
     """
     Return the harmonic representation plus the decoded chord sequence.
 
@@ -29,12 +29,60 @@ def analyze_song(path, key=('A', 'major'), key_bias=True, keep_top=3):
     if key_bias:
         probs *= key_bias_vec[:, None]
     probs /= probs.sum(axis=0, keepdims=True)
-
+    #viterbi's chosen chord sequence: an array of indices into the labels list, one per frame
     path_indices = lb.sequence.viterbi_discriminative(probs, trans)
+    # print(path_indices)
     chord_labels = [labels[i] for i in path_indices]
     times = lb.frames_to_time(np.arange(chroma.shape[1]), sr=sr, hop_length=HOP_LENGTH)
+    beat_times, bars, bpm = get_beat_info(perc_path, time_signature=time_signature, bpm=bpm)
 
-    return y, sr, times, chord_labels, chroma
+    return y, sr, times, chord_labels, chroma, beat_times, bars, bpm
+
+
+def get_beat_info(perc_path, time_signature=(4, 4), bpm=None):
+    y, sr = lb.load(perc_path)
+    onset_env = lb.onset.onset_strength(y=y, sr=sr)
+    if bpm is None:
+        bpm, beat_times = lb.beat.beat_track(onset_envelope=onset_env, sr=sr, units='time')
+    else:
+        _, beat_times = lb.beat.beat_track(onset_envelope=onset_env, sr=sr, start_bpm=bpm, units='time')
+    beats_per_bar = time_signature[0]
+    bars = []
+    for i in range(0, len(beat_times), beats_per_bar):
+        new_bar = {'start': beat_times[i], 
+                   'end': beat_times[i + beats_per_bar - 1] if i + beats_per_bar - 1 < len(beat_times) else beat_times[-1]}
+        bars.append(new_bar)
+    return beat_times, bars, bpm
+
+
+def quantize_chord_events(events, beat_times):
+    """Quantizes every chord event to the nearest beat. """
+    beat_times_search_start_index=0
+    for event in events:
+        start = event['start']
+        end = event['end']
+        for i in range(beat_times_search_start_index, len(beat_times), 1):
+            if beat_times[i] > start:
+                if beat_times[i] - start > start - beat_times[i-1]:
+                    new_start = (beat_times[i-1], i-1)
+                else:
+                    new_start = (beat_times[i], i)
+                beat_times_search_start_index = i
+                break
+        event['start'], event['start_index'] = new_start
+        # Quantize the end time as well
+        for i in range(beat_times_search_start_index, len(beat_times), 1):
+            if beat_times[i] > end:
+                if beat_times[i] - end > end - beat_times[i-1]:
+                    new_end = (beat_times[i-1], i-1)    
+                else:
+                    new_end = (beat_times[i], i)
+                beat_times_search_start_index = i
+                break
+        event['end'], event['end_index'] = new_end
+    return events
+
+
 
 
 def group_chord_labels_into_events(chord_labels, times, min_duration=0.15):
@@ -102,6 +150,7 @@ def chord_label_to_midi_notes(label):
 def export_chords_to_midi(
     audio_path,
     output_path,
+    perc_path,
     key=('A', 'major'),
     key_bias=True,
     keep_top=3,
@@ -128,15 +177,16 @@ def export_chords_to_midi(
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
-    _, sr, times, chord_labels, _ = analyze_song(
+    _, sr, times, chord_labels, _, beat_times, _, _ = analyze_song(
         audio_path,
+        perc_path,
         key=key,
         key_bias=key_bias,
         keep_top=keep_top,
     )
 
     events = group_chord_labels_into_events(chord_labels, times, min_duration=min_duration)
-    # events = quantize_chord_events(events, bpm=bpm, beats_per_bar=beats_per_bar)
+    events = quantize_chord_events(events, beat_times)
 
     midi = MIDIFile(1)
     midi.addTrackName(0, 0, 'Chord transcription')
@@ -147,8 +197,8 @@ def export_chords_to_midi(
         if not note_numbers:
             continue
 
-        start_beats = event['start'] * bpm / 60.0
-        end_beats = event['end'] * bpm / 60.0
+        start_beats = event['start_index']
+        end_beats = event['end_index']
         dur_beats = max(end_beats - start_beats, 1.0 / 32.0)
 
         for note_num in note_numbers:
@@ -172,27 +222,29 @@ def export_chords_to_midi(
     }
 
 
-if __name__ == '__main__':
-    import argparse
+export_chords_to_midi('data/separated/neverender/other.wav', 'output.mid', perc_path='data/separated/neverender/drums.wav', key=('F#', 'minor'), key_bias=True, keep_top=3, min_duration=0.15, bpm=120, velocity=80, channel=0, beats_per_bar=4)
 
-    parser = argparse.ArgumentParser(description='Export a chord transcription MIDI from an audio file.')
-    parser.add_argument('audio_path', help='Path to the input audio file')
-    parser.add_argument('output_path', help='Output MIDI filename')
-    parser.add_argument('--key', nargs=2, default=('A', 'major'), metavar=('ROOT', 'MODE'))
-    parser.add_argument('--no-key-bias', action='store_true')
-    parser.add_argument('--keep-top', type=int, default=3)
-    parser.add_argument('--min-duration', type=float, default=0.15)
-    parser.add_argument('--bpm', type=float, default=120.0)
-    args = parser.parse_args()
+# if __name__ == '__main__':
+#     import argparse
 
-    key_bias = not args.no_key_bias
-    export_chords_to_midi(
-        args.audio_path,
-        args.output_path,
-        key=(args.key[0], args.key[1]),
-        key_bias=key_bias,
-        keep_top=args.keep_top,
-        min_duration=args.min_duration,
-        bpm=args.bpm,
-    )
-    print(f"Wrote MIDI to {args.output_path}")
+#     parser = argparse.ArgumentParser(description='Export a chord transcription MIDI from an audio file.')
+#     parser.add_argument('audio_path', help='Path to the input audio file')
+#     parser.add_argument('output_path', help='Output MIDI filename')
+#     parser.add_argument('--key', nargs=2, default=('A', 'major'), metavar=('ROOT', 'MODE'))
+#     parser.add_argument('--no-key-bias', action='store_true')
+#     parser.add_argument('--keep-top', type=int, default=3)
+#     parser.add_argument('--min-duration', type=float, default=0.15)
+#     parser.add_argument('--bpm', type=float, default=120.0)
+#     args = parser.parse_args()
+
+#     key_bias = not args.no_key_bias
+#     export_chords_to_midi(
+#         args.audio_path,
+#         args.output_path,
+#         key=(args.key[0], args.key[1]),
+#         key_bias=key_bias,
+#         keep_top=args.keep_top,
+#         min_duration=args.min_duration,
+#         bpm=args.bpm,
+#     )
+#     print(f"Wrote MIDI to {args.output_path}")
