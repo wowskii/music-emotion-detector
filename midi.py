@@ -7,36 +7,117 @@ from utilities import *
 HOP_LENGTH = 512
 
 
-def analyze_song(path, perc_path, key=('A', 'major'), time_signature=(4, 4), bpm=None, key_bias=True, keep_top=3):
+def process_audio_file(audio_path: str, bpm=None, perc_path=None, key=(None, None), use_quantize=True, separated=False):
+    """Exctract the chords from any audio file and convert them to midi
+    This function's goal is to handle all the different use cases.
+    
+    Keyword arguments:
+    argument -- description
+    Return: a midi file
     """
-    Return the harmonic representation plus the decoded chord sequence.
 
-    Intermediate stage:
-    - chroma: array with shape (12, T), one pitch class vector per time frame
-    - chord_labels: list of length T, one chord label per frame
-    - times: list of frame timestamps in seconds, one per frame
-    """
-    y, sr = lb.load(path)
-    y_harm, _ = lb.effects.hpss(y)
+    if not separated :
+        pathnumber = 0
+        if not os.path.exists(f"data/separated/output{pathnumber}"):
+            os.makedirs(f"data/separated/output{pathnumber}")
+        separated_path = f"data/separated/output{pathnumber}"
+        print("Separating song stems. This may take a few minutes.")
+        separate_song_stems(audio_path, f"data/separated/output{pathnumber}")
+        perc_path = os.path.join(separated_path, "drums.wav")
+        chords_path = os.path.join(separated_path, "other.wav")
+        #we keep separated and perc_path for the case where the audio has no percussion (separated=True and perc_path==None)
+    else:
+        chords_path = audio_path
 
-    chroma = lb.feature.chroma_cens(y=y_harm, sr=sr, hop_length=HOP_LENGTH)
-    chroma = process_chroma(chroma, keep_top=keep_top)
+    if bpm is None:
+        _, _, bpm = get_beat_info(perc_path if perc_path != None else audio_path)
+        print(f"Found BPM: ${bpm}")
 
+    bpm = bpm
+
+
+    chroma, times = get_chromagram(chords_path)
+    print("Got chromagram")
     trans = lb.sequence.transition_loop(84, 0.5)
-    key_bias_vec = key_bias_vector(*key)
 
+    #detect chords keyless
     probs = np.exp(weights.dot(chroma))
-    if key_bias:
-        probs *= key_bias_vec[:, None]
-    probs /= probs.sum(axis=0, keepdims=True)
-    #viterbi's chosen chord sequence: an array of indices into the labels list, one per frame
-    path_indices = lb.sequence.viterbi_discriminative(probs, trans)
-    # print(path_indices)
-    chord_labels = [labels[i] for i in path_indices]
-    times = lb.frames_to_time(np.arange(chroma.shape[1]), sr=sr, hop_length=HOP_LENGTH)
-    beat_times, bars, bpm = get_beat_info(perc_path, time_signature=time_signature, bpm=bpm)
 
-    return y, sr, times, chord_labels, chroma, beat_times, bars, bpm
+    if key != (None, None): #detect chords with key
+        key_bias_vec = key_bias_vector(*key)
+        probs *= key_bias_vec[:, None]
+
+    probs /= probs.sum(axis=0, keepdims=True)
+
+    #viterbi's chosen chord sequence: an array of indices into the labels list, one per frame
+    print("Running Viterbi discriminative...")
+    # print(probs)
+    # print(trans)
+    path_indices = lb.sequence.viterbi_discriminative(probs, trans)
+    chord_labels = [labels[i] for i in path_indices]
+
+    events = group_chord_labels_into_events(chord_labels, times)
+    print(events)
+
+    if use_quantize:
+        print("Quantizing...")
+        events = quantize_chord_events(events, times)
+        print(events)
+
+    return generate_midi(events, bpm)
+
+
+
+def generate_midi(events, bpm):
+
+    midi = MIDIFile(1)
+    midi.addTrackName(0, 0, 'Chord transcription')
+    midi.addTempo(0, 0, bpm)
+
+    for event in events:
+        note_numbers = chord_label_to_midi_notes(event['label'])
+        if not note_numbers:
+            continue
+
+        start_beats = event['start_index']
+        end_beats = event['end_index']
+        dur_beats = max(end_beats - start_beats, 1.0 / 32.0)
+
+        for note_num in note_numbers:
+            midi.addNote(
+                track=0,
+                channel=0,
+                pitch=note_num,
+                time=start_beats,
+                duration=dur_beats,
+                volume=80,
+            )
+
+    output_path = "output.mid"
+
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    with open(output_path, 'wb') as f:
+        midi.writeFile(f)
+
+    print("success")
+    return output_path
+    
+
+    
+
+
+def get_chromagram(path):
+    y, sr = lb.load(path)
+
+    chroma = lb.feature.chroma_cens(y=y, sr=sr, hop_length=HOP_LENGTH)
+    chroma = process_chroma(chroma)
+
+    times = lb.frames_to_time(np.arange(chroma.shape[1]), sr=sr, hop_length=HOP_LENGTH)
+
+    return chroma, times
+
+
+
 
 
 def get_beat_info(perc_path, time_signature=(4, 4), bpm=None):
@@ -52,7 +133,7 @@ def get_beat_info(perc_path, time_signature=(4, 4), bpm=None):
         new_bar = {'start': beat_times[i], 
                    'end': beat_times[i + beats_per_bar - 1] if i + beats_per_bar - 1 < len(beat_times) else beat_times[-1]}
         bars.append(new_bar)
-    return beat_times, bars, bpm
+    return beat_times, bars, bpm[0]
 
 
 def quantize_chord_events(events, beat_times):
@@ -85,7 +166,7 @@ def quantize_chord_events(events, beat_times):
 
 
 
-def group_chord_labels_into_events(chord_labels, times, min_duration=0.15):
+def group_chord_labels_into_events(chord_labels = list, times = list, min_duration=0.15):
     """
     Convert the per-frame chord list into a clearer intermediate form:
     a list of chord events, each with start/end time and the chord label.
@@ -147,82 +228,8 @@ def chord_label_to_midi_notes(label):
     return [root_midi + interval for interval in intervals]
 
 
-def export_chords_to_midi(
-    audio_path,
-    output_path,
-    perc_path,
-    key=('A', 'major'),
-    key_bias=True,
-    keep_top=3,
-    min_duration=0.15,
-    bpm=120,
-    velocity=80,
-    channel=0,
-    beats_per_bar=4,
-):
-    """
-    Analyze an audio file, quantize the resulting chord events to a bar grid,
-    convert the Viterbi chord labels into note events, and save a MIDI file.
 
-    Returns a dictionary with the clear intermediate stages:
-    {
-        'frame_labels': [...],   # one label per audio frame
-        'events': [
-            {'label': 'C:maj', 'start': 0.0, 'end': 2.0},
-            ...
-        ],
-        'midi_path': 'output.mid'
-    }
-    """
-    if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"Audio file not found: {audio_path}")
-
-    _, sr, times, chord_labels, _, beat_times, _, _ = analyze_song(
-        audio_path,
-        perc_path,
-        key=key,
-        key_bias=key_bias,
-        keep_top=keep_top,
-    )
-
-    events = group_chord_labels_into_events(chord_labels, times, min_duration=min_duration)
-    events = quantize_chord_events(events, beat_times)
-
-    midi = MIDIFile(1)
-    midi.addTrackName(0, 0, 'Chord transcription')
-    midi.addTempo(0, 0, bpm)
-
-    for event in events:
-        note_numbers = chord_label_to_midi_notes(event['label'])
-        if not note_numbers:
-            continue
-
-        start_beats = event['start_index']
-        end_beats = event['end_index']
-        dur_beats = max(end_beats - start_beats, 1.0 / 32.0)
-
-        for note_num in note_numbers:
-            midi.addNote(
-                track=0,
-                channel=channel,
-                pitch=note_num,
-                time=start_beats,
-                duration=dur_beats,
-                volume=velocity,
-            )
-
-    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
-    with open(output_path, 'wb') as f:
-        midi.writeFile(f)
-
-    return {
-        'frame_labels': chord_labels,
-        'events': events,
-        'midi_path': output_path,
-    }
-
-
-export_chords_to_midi('data/separated/neverender/other.wav', 'output.mid', perc_path='data/separated/neverender/drums.wav', key=('F#', 'minor'), key_bias=True, keep_top=3, min_duration=0.15, bpm=120, velocity=80, channel=0, beats_per_bar=4)
+process_audio_file("data/neverender.mp3", separated=True, perc_path="data/separated/output0/drums.wav")
 
 # if __name__ == '__main__':
 #     import argparse
@@ -248,3 +255,115 @@ export_chords_to_midi('data/separated/neverender/other.wav', 'output.mid', perc_
 #         bpm=args.bpm,
 #     )
 #     print(f"Wrote MIDI to {args.output_path}")
+
+
+
+# CODE BIN
+
+# def analyze_song(path, perc_path, key=('A', 'major'), time_signature=(4, 4), bpm=None, key_bias=True, keep_top=3):
+#     """
+#     Return the harmonic representation plus the decoded chord sequence.
+
+#     Intermediate stage:
+#     - chroma: array with shape (12, T), one pitch class vector per time frame
+#     - chord_labels: list of length T, one chord label per frame
+#     - times: list of frame timestamps in seconds, one per frame
+#     """
+#     y, sr = lb.load(path)
+#     y_harm, _ = lb.effects.hpss(y)
+
+#     chroma = lb.feature.chroma_cens(y=y_harm, sr=sr, hop_length=HOP_LENGTH)
+#     chroma = process_chroma(chroma, keep_top=keep_top)
+
+#     trans = lb.sequence.transition_loop(84, 0.5)
+#     key_bias_vec = key_bias_vector(*key)
+
+#     probs = np.exp(weights.dot(chroma))
+#     if key_bias:
+#         probs *= key_bias_vec[:, None]
+#     probs /= probs.sum(axis=0, keepdims=True)
+#     #viterbi's chosen chord sequence: an array of indices into the labels list, one per frame
+#     path_indices = lb.sequence.viterbi_discriminative(probs, trans)
+#     # print(path_indices)
+#     chord_labels = [labels[i] for i in path_indices]
+#     times = lb.frames_to_time(np.arange(chroma.shape[1]), sr=sr, hop_length=HOP_LENGTH)
+#     beat_times, bars, bpm = get_beat_info(perc_path, time_signature=time_signature, bpm=bpm)
+
+#     return y, sr, times, chord_labels, chroma, beat_times, bars, bpm
+
+# def export_chords_to_midi(
+#     audio_path,
+#     output_path,
+#     perc_path,
+#     key=('A', 'major'),
+#     key_bias=True,
+#     keep_top=3,
+#     min_duration=0.15,
+#     bpm=120,
+#     velocity=80,
+#     channel=0,
+#     beats_per_bar=4,
+# ):
+#     """
+#     Analyze an audio file, quantize the resulting chord events to a bar grid,
+#     convert the Viterbi chord labels into note events, and save a MIDI file.
+
+#     Returns a dictionary with the clear intermediate stages:
+#     {
+#         'frame_labels': [...],   # one label per audio frame
+#         'events': [
+#             {'label': 'C:maj', 'start': 0.0, 'end': 2.0},
+#             ...
+#         ],
+#         'midi_path': 'output.mid'
+#     }
+#     """
+#     if not os.path.exists(audio_path):
+#         raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+#     _, sr, times, chord_labels, _, beat_times, _, _ = analyze_song(
+#         audio_path,
+#         perc_path,
+#         key=key,
+#         key_bias=key_bias,
+#         keep_top=keep_top,
+#     )
+
+#     events = group_chord_labels_into_events(chord_labels, times, min_duration=min_duration)
+#     events = quantize_chord_events(events, beat_times)
+
+#     midi = MIDIFile(1)
+#     midi.addTrackName(0, 0, 'Chord transcription')
+#     midi.addTempo(0, 0, bpm)
+
+#     for event in events:
+#         note_numbers = chord_label_to_midi_notes(event['label'])
+#         if not note_numbers:
+#             continue
+
+#         start_beats = event['start_index']
+#         end_beats = event['end_index']
+#         dur_beats = max(end_beats - start_beats, 1.0 / 32.0)
+
+#         for note_num in note_numbers:
+#             midi.addNote(
+#                 track=0,
+#                 channel=channel,
+#                 pitch=note_num,
+#                 time=start_beats,
+#                 duration=dur_beats,
+#                 volume=velocity,
+#             )
+
+#     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+#     with open(output_path, 'wb') as f:
+#         midi.writeFile(f)
+
+#     return {
+#         'frame_labels': chord_labels,
+#         'events': events,
+#         'midi_path': output_path,
+#     }
+
+
+# export_chords_to_midi('data/separated/neverender/other.wav', 'output.mid', perc_path='data/separated/neverender/drums.wav', key=('F#', 'minor'), key_bias=True, keep_top=3, min_duration=0.15, bpm=120, velocity=80, channel=0, beats_per_bar=4)

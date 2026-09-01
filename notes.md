@@ -12,3 +12,6 @@ midi converter:
 - song to midi, all great
 
 but a few questions present themselves
+
+ok your clean chords for the midi converter (make a website btw) are looking good, one issue,
+for some reason its super long??? is it because the bpm is in floats?
