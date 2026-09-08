@@ -29,11 +29,13 @@ def process_audio_file(audio_path: str, bpm=None, perc_path=None, key=(None, Non
     else:
         chords_path = audio_path
 
+    beat_times, _, detected_bpm = get_beat_info(
+        perc_path if perc_path is not None else audio_path,
+        bpm=bpm,
+    )
     if bpm is None:
-        _, _, bpm = get_beat_info(perc_path if perc_path != None else audio_path)
-        print(f"Found BPM: ${bpm}")
-
-    bpm = bpm
+        bpm = detected_bpm
+        print(f"Found BPM: {bpm}")
 
 
     chroma, times = get_chromagram(chords_path)
@@ -61,7 +63,9 @@ def process_audio_file(audio_path: str, bpm=None, perc_path=None, key=(None, Non
 
     if use_quantize:
         print("Quantizing...")
-        events = quantize_chord_events(events, times)
+        # Quantize against detected beat timestamps, not chromagram frame times.
+        # The resulting start_index/end_index values are exact MIDI beat indices.
+        events = quantize_chord_events(events, beat_times)
         print(events)
 
     return generate_midi(events, bpm)
@@ -79,8 +83,14 @@ def generate_midi(events, bpm):
         if not note_numbers:
             continue
 
-        start_beats = event['start_index']
-        end_beats = event['end_index']
+        if 'start_index' not in event or 'end_index' not in event:
+            # Unquantized event times are seconds; MIDIUtil expects beats.
+            start_beats = float(event['start']) * float(bpm) / 60.0
+            end_beats = float(event['end']) * float(bpm) / 60.0
+        else:
+            start_beats = float(event['start_index'])
+            end_beats = float(event['end_index'])
+        print(f"start_beats: {start_beats}, end_beats: {end_beats}")
         dur_beats = max(end_beats - start_beats, 1.0 / 32.0)
 
         for note_num in note_numbers:
@@ -133,7 +143,9 @@ def get_beat_info(perc_path, time_signature=(4, 4), bpm=None):
         new_bar = {'start': beat_times[i], 
                    'end': beat_times[i + beats_per_bar - 1] if i + beats_per_bar - 1 < len(beat_times) else beat_times[-1]}
         bars.append(new_bar)
-    return beat_times, bars, bpm[0]
+
+    bpm = float(np.asarray(bpm).reshape(-1)[0])
+    return beat_times, bars, bpm
 
 
 def quantize_chord_events(events, beat_times):
@@ -229,7 +241,7 @@ def chord_label_to_midi_notes(label):
 
 
 
-process_audio_file("data/neverender.mp3", separated=True, perc_path="data/separated/output0/drums.wav")
+process_audio_file("data/separated/output0/other.wav", separated=True, perc_path="data/separated/output0/drums.wav", use_quantize=True)
 
 # if __name__ == '__main__':
 #     import argparse
