@@ -241,8 +241,6 @@ def chord_label_to_midi_notes(label):
 
 
 
-process_audio_file("data/separated/output0/other.wav", separated=True, perc_path="data/separated/output0/drums.wav", use_quantize=True)
-
 # if __name__ == '__main__':
 #     import argparse
 
