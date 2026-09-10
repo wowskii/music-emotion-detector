@@ -1,0 +1,15 @@
+name: Sync to Hugging Face Hub
+on:
+  push:
+    branches: [main] # Triggers the sync every time you push to your main branch
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: wowskii/music-emotion-detector
+          huggingface_repo_id: wowskii/MIDI-chords-from-audio
+          hf_token: ${{ secrets.HF_TOKEN }}
