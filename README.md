@@ -1,6 +1,6 @@
 ---
 title: Chord extractor
-emoji: music
+emoji: 🎵
 colorFrom: purple
 colorTo: red
 sdk: gradio
