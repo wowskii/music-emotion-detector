@@ -68,7 +68,7 @@ def process_audio_file(audio_path: str, bpm=None, perc_path=None, key=(None, Non
         events = quantize_chord_events(events, beat_times)
         print(events)
 
-    return generate_midi(events, bpm)
+    return generate_midi(events, bpm), events
 
 
 

@@ -1,9 +1,48 @@
+import base64
+import json
+import mimetypes
+
 import gradio as gr
 
 from midi import process_audio_file
 from utilities import NOTE_NAMES
 
 KEY_MODES = ["major", "minor", "harmonic_minor"]
+
+
+def build_chord_player_html(audio_path, events):
+    """Embed the audio as a data URI and sync a chord label to its playback time."""
+    mime = mimetypes.guess_type(audio_path)[0] or "audio/wav"
+    with open(audio_path, "rb") as f:
+        b64_audio = base64.b64encode(f.read()).decode("utf-8")
+
+    events_json = json.dumps([
+        {"label": e["label"], "start": float(e["start"]), "end": float(e["end"])}
+        for e in events
+    ])
+
+    return f"""
+    <div style="display:flex; flex-direction:column; gap:10px; align-items:center;">
+        <audio id="chord-audio-player" controls style="width:100%;" src="data:{mime};base64,{b64_audio}"></audio>
+        <div id="chord-label-display" style="font-size:2.5em; font-weight:bold; min-height:1.4em;">–</div>
+    </div>
+    <script>
+    (function() {{
+        const events = {events_json};
+        const audio = document.getElementById('chord-audio-player');
+        const label = document.getElementById('chord-label-display');
+        if (!audio || !label) return;
+        audio.ontimeupdate = function() {{
+            const t = audio.currentTime;
+            let current = '–';
+            for (const e of events) {{
+                if (t >= e.start && t < e.end) {{ current = e.label; break; }}
+            }}
+            label.innerText = current;
+        }};
+    }})();
+    </script>
+    """
 
 
 def run(audio_file, drums_file, bpm, key_root, key_mode, quantize, split_audio):
@@ -13,7 +52,7 @@ def run(audio_file, drums_file, bpm, key_root, key_mode, quantize, split_audio):
     key = (key_root, key_mode) if key_root and key_mode else (None, None)
     bpm_value = float(bpm) if bpm else None
 
-    midi_path = process_audio_file(
+    midi_path, events = process_audio_file(
         audio_file,
         bpm=bpm_value,
         perc_path=drums_file,
@@ -22,7 +61,9 @@ def run(audio_file, drums_file, bpm, key_root, key_mode, quantize, split_audio):
         separated=not split_audio,
     )
 
-    return midi_path
+    player_html = build_chord_player_html(audio_file, events)
+
+    return midi_path, player_html
 
 
 with gr.Blocks(title="Chord to MIDI Converter") as demo:
@@ -68,6 +109,7 @@ with gr.Blocks(title="Chord to MIDI Converter") as demo:
 
     convert_button = gr.Button("Convert to MIDI", variant="primary")
     output_file = gr.File(label="Result MIDI file")
+    chord_player = gr.HTML(label="Play along with detected chords")
 
     convert_button.click(
         fn=run,
@@ -80,7 +122,7 @@ with gr.Blocks(title="Chord to MIDI Converter") as demo:
             quantize_input,
             split_audio_input,
         ],
-        outputs=output_file,
+        outputs=[output_file, chord_player],
     )
 
 
