@@ -2,6 +2,8 @@ import base64
 import json
 import mimetypes
 
+import spaces
+
 import gradio as gr
 
 from midi import process_audio_file
@@ -44,7 +46,7 @@ def build_chord_player_html(audio_path, events):
     </script>
     """
 
-
+@spaces.GPU
 def run(audio_file, drums_file, bpm, key_root, key_mode, quantize, split_audio):
     if audio_file is None:
         raise gr.Error("Please upload an audio file.")
