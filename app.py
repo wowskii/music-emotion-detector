@@ -13,7 +13,12 @@ KEY_MODES = ["major", "minor", "harmonic_minor"]
 
 
 def build_chord_player_html(audio_path, events):
-    """Embed the audio as a data URI and sync a chord label to its playback time."""
+    """Embed the audio as a data URI and sync a chord label to its playback time.
+
+    Note: <script> tags inserted through gr.HTML's innerHTML are never executed
+    by the browser, so the sync logic is attached via an inline ontimeupdate
+    attribute instead, reading the events from a data-events attribute.
+    """
     mime = mimetypes.guess_type(audio_path)[0] or "audio/wav"
     with open(audio_path, "rb") as f:
         b64_audio = base64.b64encode(f.read()).decode("utf-8")
@@ -21,29 +26,27 @@ def build_chord_player_html(audio_path, events):
     events_json = json.dumps([
         {"label": e["label"], "start": float(e["start"]), "end": float(e["end"])}
         for e in events
-    ])
+    ]).replace("'", "&#39;")
+
+    on_time_update = (
+        "var t=this.currentTime;"
+        "var evs=JSON.parse(this.dataset.events);"
+        "var lbl=document.getElementById('chord-label-display');"
+        "var cur='\u2013';"
+        "for (var i=0;i<evs.length;i++){"
+        "if (t>=evs[i].start && t<evs[i].end){cur=evs[i].label;break;}"
+        "}"
+        "if(lbl){lbl.innerText=cur;}"
+    )
 
     return f"""
     <div style="display:flex; flex-direction:column; gap:10px; align-items:center;">
-        <audio id="chord-audio-player" controls style="width:100%;" src="data:{mime};base64,{b64_audio}"></audio>
+        <audio id="chord-audio-player" controls style="width:100%;"
+            data-events='{events_json}'
+            ontimeupdate="{on_time_update}"
+            src="data:{mime};base64,{b64_audio}"></audio>
         <div id="chord-label-display" style="font-size:2.5em; font-weight:bold; min-height:1.4em;">–</div>
     </div>
-    <script>
-    (function() {{
-        const events = {events_json};
-        const audio = document.getElementById('chord-audio-player');
-        const label = document.getElementById('chord-label-display');
-        if (!audio || !label) return;
-        audio.ontimeupdate = function() {{
-            const t = audio.currentTime;
-            let current = '–';
-            for (const e of events) {{
-                if (t >= e.start && t < e.end) {{ current = e.label; break; }}
-            }}
-            label.innerText = current;
-        }};
-    }})();
-    </script>
     """
 
 @spaces.GPU
