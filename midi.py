@@ -16,6 +16,9 @@ def process_audio_file(audio_path: str, bpm=None, perc_path=None, key=(None, Non
     Return: a midi file
     """
 
+    if bpm == 0:
+        bpm = None
+
     if not separated :
         pathnumber = 0
         if not os.path.exists(f"data/separated/output{pathnumber}"):

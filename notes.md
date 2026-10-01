@@ -17,3 +17,6 @@ ok your clean chords for the midi converter (make a website btw) are looking goo
 for some reason its super long??? is it because the bpm is in floats?
 
 okay. bpm fixed. what's next?
+
+when the song key is unsure, add a search option (swiss knife?)
+
