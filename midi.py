@@ -62,14 +62,12 @@ def process_audio_file(audio_path: str, bpm=None, perc_path=None, key=(None, Non
     chord_labels = [labels[i] for i in path_indices]
 
     events = group_chord_labels_into_events(chord_labels, times)
-    print(events)
 
     if use_quantize:
         print("Quantizing...")
         # Quantize against detected beat timestamps, not chromagram frame times.
         # The resulting start_index/end_index values are exact MIDI beat indices.
         events = quantize_chord_events(events, beat_times)
-        print(events)
 
     return generate_midi(events, bpm), events
 
@@ -93,7 +91,7 @@ def generate_midi(events, bpm):
         else:
             start_beats = float(event['start_index'])
             end_beats = float(event['end_index'])
-        print(f"start_beats: {start_beats}, end_beats: {end_beats}")
+        #print(f"start_beats: {start_beats}, end_beats: {end_beats}")
         dur_beats = max(end_beats - start_beats, 1.0 / 32.0)
 
         for note_num in note_numbers:
@@ -153,30 +151,25 @@ def get_beat_info(perc_path, time_signature=(4, 4), bpm=None):
 
 def quantize_chord_events(events, beat_times):
     """Quantizes every chord event to the nearest beat. """
-    beat_times_search_start_index=0
+    beat_times = np.asarray(beat_times)
+    if len(beat_times) == 0:
+        return events
+
+    def nearest(t):
+        return int(np.argmin(np.abs(beat_times - t)))
+
+    quantized = []
     for event in events:
-        start = event['start']
-        end = event['end']
-        for i in range(beat_times_search_start_index, len(beat_times), 1):
-            if beat_times[i] > start:
-                if beat_times[i] - start > start - beat_times[i-1]:
-                    new_start = (beat_times[i-1], i-1)
-                else:
-                    new_start = (beat_times[i], i)
-                beat_times_search_start_index = i
-                break
-        event['start'], event['start_index'] = new_start
-        # Quantize the end time as well
-        for i in range(beat_times_search_start_index, len(beat_times), 1):
-            if beat_times[i] > end:
-                if beat_times[i] - end > end - beat_times[i-1]:
-                    new_end = (beat_times[i-1], i-1)    
-                else:
-                    new_end = (beat_times[i], i)
-                beat_times_search_start_index = i
-                break
-        event['end'], event['end_index'] = new_end
-    return events
+        start_i = nearest(event['start'])
+        end_i = nearest(event['end'])
+        # Chords that collapse onto one beat (or fall past the last beat) would
+        # become zero-length/overlapping notes, which breaks MIDIUtil
+        if end_i <= start_i:
+            continue
+        event['start'], event['start_index'] = float(beat_times[start_i]), start_i
+        event['end'], event['end_index'] = float(beat_times[end_i]), end_i
+        quantized.append(event)
+    return quantized
 
 
 
